@@ -2,7 +2,8 @@ cmake_minimum_required(VERSION 2.8.3)
 project(lio_livox)
 
 SET(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11")
+# set(CMAKE_CXX_FLAGS "-std=c++11")
+#set(CMAKE_CXX_STANDARD 14)
 
 #SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -25,11 +26,16 @@ find_package(catkin REQUIRED COMPONENTS
   	     message_filters
   	     std_srvs)
 
-find_package(Eigen3 REQUIRED)
+find_package(Eigen3 3.3.4 REQUIRED)
 find_package(PCL REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(SuiteSparse REQUIRED)
+MESSAGE(STATUS "This is PCL_VERSION " ${PCL_VERSION})
+MESSAGE(STATUS "This is Eigen_VERSION " ${EIGEN3_VERSION})
+MESSAGE(STATUS "This is Eigen_INCLUDE_DIR " ${EIGEN3_INCLUDE_DIR})
+MESSAGE(STATUS "This is Eigen_DIR " ${EIGEN3_DIR})
+MESSAGE(STATUS "This is CERES_VERSION " ${CERES_VERSION})
 
 include_directories(include
         	    ${catkin_INCLUDE_DIRS}

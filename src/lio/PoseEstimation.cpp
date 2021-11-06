@@ -1,5 +1,14 @@
 #include "Estimator/Estimator.h"
+#include "pcl/io/ply_io.h"
 typedef pcl::PointXYZINormal PointType;
+
+
+//全局点云显示
+pcl::VoxelGrid<PointType> downFullMap;
+pcl::PointCloud<PointType>::Ptr globalMap(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr globalMapDS(new pcl::PointCloud<PointType>());
+std::mutex _mutexMapQueue;
+std::queue<pcl::PointCloud<PointType>> _globalMapQueue;
 
 int WINDOWSIZE;
 bool LidarIMUInited = false;
@@ -13,6 +22,7 @@ ros::Publisher pubFullLaserCloud;
 tf::StampedTransform laserOdometryTrans;
 tf::TransformBroadcaster* tfBroadcaster;
 ros::Publisher pubGps;
+ros::Publisher pubGlobalMap;
 
 bool newfullCloud = false;
 
@@ -365,10 +375,27 @@ bool TryMAPInitialization() {
 void process(){
   double time_last_lidar = -1;
   double time_curr_lidar = -1;
+  //std::cout<<"  haha"<<std::endl;
   Eigen::Matrix3d delta_Rl = Eigen::Matrix3d::Identity();
   Eigen::Vector3d delta_tl = Eigen::Vector3d::Zero();
 	Eigen::Matrix3d delta_Rb = Eigen::Matrix3d::Identity();
 	Eigen::Vector3d delta_tb = Eigen::Vector3d::Zero();
+ 
+  //25
+  // transformAftMapped.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(0.3563,Eigen::Vector3d::UnitZ())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitY())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitX()));
+  
+  // transformAftMapped.topRightCorner(3,1) = Eigen::Vector3d(1701.4710,1083.2363,0);
+
+  //32
+  // transformAftMapped.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(0.3256,Eigen::Vector3d::UnitZ())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitY())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitX()));
+  
+  // transformAftMapped.topRightCorner(3,1) = Eigen::Vector3d(1739.4742,1455.2052,0);
+
+
   std::vector<sensor_msgs::ImuConstPtr> vimuMsg;
   while(ros::ok()){
     newfullCloud = false;
@@ -463,6 +490,7 @@ void process(){
 	    	  break;
 	    	else{
 			    // predict current lidar pose
+          //通过上一帧增量估计此帧位置
 			    lidarFrame.P = transformAftMapped.topLeftCorner(3,3) * delta_tb
 			                   + transformAftMapped.topRightCorner(3,1);
 			    Eigen::Matrix3d m3d = transformAftMapped.topLeftCorner(3,3) * delta_Rb;
@@ -470,6 +498,10 @@ void process(){
 
 			    lidar_list.reset(new std::list<Estimator::LidarFrame>);
 			    lidar_list->push_back(lidarFrame);
+          // std::cout<<"transformAftMapped.topLeftCorner(3,3)="<<transformAftMapped.topLeftCorner(3,3)<<std::endl;
+          // std::cout<<"transformAftMapped.topRightCorner(3,1)="<<transformAftMapped.topRightCorner(3,1).transpose()<<std::endl;
+          //  std::cout<<"delta_tb="<<delta_tb.transpose()<<std::endl;
+          // std::cout<<"delta_Rb="<<delta_Rb<<std::endl;
 	    	}
 	    }
 
@@ -477,16 +509,27 @@ void process(){
 	    RemoveLidarDistortion(laserCloudFullRes, delta_Rl, delta_tl);
 
       // optimize current lidar pose with IMU
+      //通过特征做匹配，求结果，lidar_list为最终结果
       estimator->EstimateLidarPose(*lidar_list, exTlb, GravityVector, debugInfo);
 
       pcl::PointCloud<PointType>::Ptr laserCloudCornerMap(new pcl::PointCloud<PointType>());
       pcl::PointCloud<PointType>::Ptr laserCloudSurfMap(new pcl::PointCloud<PointType>());
 
 	    Eigen::Matrix4d transformTobeMapped = Eigen::Matrix4d::Identity();
-	    transformTobeMapped.topLeftCorner(3,3) = lidar_list->front().Q * exRbl;
+	    transformTobeMapped.topLeftCorner(3,3) = lidar_list->front().Q * exRbl; //exRbl IMU和lidar变换关系
 	    transformTobeMapped.topRightCorner(3,1) = lidar_list->front().Q * exPbl + lidar_list->front().P;
+      
+      //z轴置为0
+      //transformTobeMapped(2,3)= 0;
+
+      // std::cout<<"  --lidar_list->front().Q="<<lidar_list->front().Q.w()<<" "<<lidar_list->front().Q.vec().transpose()<<std::endl;
+      // std::cout<<"  --lidar_list->front().P="<<lidar_list->front().P.transpose()<<std::endl;
+      // std::cout<<"  --exRbl="<<exRbl<<std::endl;
+      // std::cout<<"  --transformTobeMapped="<<transformTobeMapped<<std::endl;
+
 
 	    // update delta transformation
+      //delta_Rb,delta_tb是求这一帧相对上一帧增量
 	    delta_Rb = transformAftMapped.topLeftCorner(3, 3).transpose() * lidar_list->front().Q.toRotationMatrix();
 	    delta_tb = transformAftMapped.topLeftCorner(3, 3).transpose() * (lidar_list->front().P - transformAftMapped.topRightCorner(3, 1));
 	    Eigen::Matrix3d Rwlpre = transformAftMapped.topLeftCorner(3, 3) * exRbl;
@@ -497,7 +540,7 @@ void process(){
 	    transformAftMapped.topRightCorner(3,1) = lidar_list->front().P;
 
 	    // publish odometry rostopic
-	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp);
+	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp); //transformTobeMapped是最后的结果
 
       // publish lidar points
       int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
@@ -505,14 +548,20 @@ void process(){
       laserCloudAfterEstimate->reserve(laserCloudFullResNum);
       for (int i = 0; i < laserCloudFullResNum; i++) {
         PointType temp_point;
-        MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped);
+        MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped); //点云转换到全局坐标
         laserCloudAfterEstimate->push_back(temp_point);
       }
       sensor_msgs::PointCloud2 laserCloudMsg;
       pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
       laserCloudMsg.header.frame_id = "/world";
       laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
-      pubFullLaserCloud.publish(laserCloudMsg);
+      pubFullLaserCloud.publish(laserCloudMsg); //最后输出的地图，原代码地图数量有限
+
+      //此处为全局地图显示
+      _mutexMapQueue.lock();
+      _globalMapQueue.push(*laserCloudAfterEstimate);
+      _mutexMapQueue.unlock();
+
 
 	    // if tightly coupled IMU message, start IMU initialization
 	    if(IMU_Mode > 1 && !LidarIMUInited){
@@ -565,6 +614,36 @@ void process(){
   }
 }
 
+//全局地图显示
+void publishGlobalMap(){
+    _mutexMapQueue.lock();
+    while(!_globalMapQueue.empty()){
+      pcl::PointCloud<PointType> temp_pointcloud;
+      temp_pointcloud = _globalMapQueue.front();
+      _globalMapQueue.pop();
+      *globalMap += temp_pointcloud;
+    } 
+    _mutexMapQueue.unlock();
+    downFullMap.setLeafSize(0.5, 0.5, 0.5);
+    downFullMap.setInputCloud(globalMap);
+    downFullMap.filter(*globalMapDS);
+    *globalMap = *globalMapDS;
+    sensor_msgs::PointCloud2 tempCloud;
+    pcl::toROSMsg(*globalMap,tempCloud);
+    tempCloud.header.stamp = ros::Time::now();
+    tempCloud.header.frame_id = "/world";
+    pubGlobalMap.publish(tempCloud);
+}
+
+//显示线程
+void visualizationThread(){
+  ros::Rate rate(0.2);
+  while(ros::ok()){
+    rate.sleep();
+    publishGlobalMap();
+  }
+}
+
 int main(int argc, char** argv)
 {
   ros::init(argc, argv, "PoseEstimation");
@@ -595,7 +674,7 @@ int main(int argc, char** argv)
   ros::Subscriber subFullCloud = nodeHandler.subscribe<sensor_msgs::PointCloud2>("/livox_full_cloud", 10, fullCallBack);
   ros::Subscriber sub_imu;
   if(IMU_Mode > 0)
-    sub_imu = nodeHandler.subscribe("/livox/imu", 2000, imu_callback, ros::TransportHints().unreliable());
+    sub_imu = nodeHandler.subscribe("/livox/imu_3WEDH5900101251", 2000, imu_callback, ros::TransportHints().unreliable());
   if(IMU_Mode < 2)
     WINDOWSIZE = 1;
   else
@@ -605,6 +684,7 @@ int main(int argc, char** argv)
   pubLaserOdometry = nodeHandler.advertise<nav_msgs::Odometry> ("/livox_odometry_mapped", 5);
   pubLaserOdometryPath = nodeHandler.advertise<nav_msgs::Path> ("/livox_odometry_path_mapped", 5);
 	pubGps = nodeHandler.advertise<sensor_msgs::NavSatFix>("/lidar", 1000);
+  pubGlobalMap = nodeHandler.advertise<sensor_msgs::PointCloud2>("/global_map", 1000);
 
   tfBroadcaster = new tf::TransformBroadcaster();
 
@@ -613,7 +693,14 @@ int main(int argc, char** argv)
 	lidarFrameList.reset(new std::list<Estimator::LidarFrame>);
 
   std::thread thread_process{process};
+  std::thread thread_visual{visualizationThread};
   ros::spin();
+  std::cout<<"save map!"<<std::endl;
+  // downFullMap.setLeafSize(0.3, 0.3, 0.3);
+  // downFullMap.setInputCloud(globalMap);
+  // downFullMap.filter(*globalMapDS);
+  
+  pcl::io::savePLYFileASCII("/home/lzg/Desktop/global.ply", *globalMapDS);
 
   return 0;
 }

@@ -286,7 +286,7 @@ int CorrectPoints_cor(float *fPoints,int pointNum,float *gndPos)
 
 int GetGndPos(float *pos, float *fPoints,int pointNum){
     float *fPoints3=(float*)calloc(60000*4,sizeof(float));//地面点
-    int pnum3 = FilterGndForPos_cor(fPoints3,fPoints,pointNum);
+    int pnum3 = FilterGndForPos_cor(fPoints3,fPoints,pointNum); //得到地面点，通过高度和高度阈值过滤？
     float tmpPos[6];
     if (pnum3 < 3)
     {

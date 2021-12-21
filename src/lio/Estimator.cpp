@@ -1198,7 +1198,7 @@ void Estimator::Estimate(std::list<LidarFrame>& lidarFrameList,
     double deltaT = (t_before_opti - t_after_opti).norm();
 
     if (deltaR < 0.05 && deltaT < 0.05 || (iterOpt+1) == max_iters){
-      ROS_INFO("Frame: %d\n",frame_count++);
+      //ROS_INFO("Frame: %d\n",frame_count++);
       if(windowSize != SLIDEWINDOWSIZE) break;
       // apply marginalization
       auto *marginalization_info = new MarginalizationInfo();

@@ -24,6 +24,9 @@ find_package(catkin REQUIRED COMPONENTS
   	     pcl_conversions
   	     pcl_ros
   	     message_filters
+		 cyber_msgs
+		 geodesy
+		 geometry_msgs
   	     std_srvs)
 
 find_package(Eigen3 3.3.4 REQUIRED)
@@ -31,6 +34,9 @@ find_package(PCL REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(SuiteSparse REQUIRED)
+find_package(GTSAMCMakeTools)
+find_package(GTSAM REQUIRED)
+
 MESSAGE(STATUS "This is PCL_VERSION " ${PCL_VERSION})
 MESSAGE(STATUS "This is Eigen_VERSION " ${EIGEN3_VERSION})
 MESSAGE(STATUS "This is Eigen_INCLUDE_DIR " ${EIGEN3_INCLUDE_DIR})
@@ -43,13 +49,18 @@ include_directories(include
 		    ${PCL_INCLUDE_DIRS}
         	    ${CERES_INCLUDE_DIRS}
 		    ${OpenCV_INCLUDE_DIRS}
-        	    ${SUITESPARSE_INCLUDE_DIRS})
+        	    ${SUITESPARSE_INCLUDE_DIRS}
+				${GTSAM_INCLUDE_DIR})
+
+link_directories(
+	${GTSAM_LIBRARY_DIRS}
+)
 
 ##################
 ## ROS messages ##
 ##################
 
-generate_messages(DEPENDENCIES std_msgs)
+# generate_messages(DEPENDENCIES std_msgs)
 
 catkin_package(CATKIN_DEPENDS geometry_msgs nav_msgs roscpp rospy std_msgs message_runtime 
   	       pcl_conversions pcl_ros message_filters std_srvs tf_conversions tf 
@@ -71,4 +82,6 @@ add_executable (PoseEstimation
 target_link_libraries(PoseEstimation ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES})
 
 
-
+add_executable (MapOptmization 
+		src/lio/MapOptmization.cpp)
+target_link_libraries(MapOptmization ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${CERES_LIBRARIES} gtsam)

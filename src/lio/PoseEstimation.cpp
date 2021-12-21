@@ -1,14 +1,54 @@
 #include "Estimator/Estimator.h"
 #include "pcl/io/ply_io.h"
+#include "pcl/filters/passthrough.h"
+#include <unistd.h>
+#include <iostream>
+#include <cstring>
+#include <tf/transform_datatypes.h>
+#include <tf/transform_broadcaster.h>
+#include <geometry_msgs/Quaternion.h>
+#include "cyber_msgs/Heading.h"
+#include <geodesy/utm.h>
+#include <geodesy/wgs84.h>
+#include <geographic_msgs/GeoPointStamped.h>
+
 typedef pcl::PointXYZINormal PointType;
 
 
 //全局点云显示
 pcl::VoxelGrid<PointType> downFullMap;
+pcl::VoxelGrid<PointType> downLocalMap;
 pcl::PointCloud<PointType>::Ptr globalMap(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr globalMapDS(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr readinMap(new pcl::PointCloud<PointType>());
 std::mutex _mutexMapQueue;
 std::queue<pcl::PointCloud<PointType>> _globalMapQueue;
+
+//局部子图存储
+bool record_data = true;
+std::ofstream poseFile;
+std::ofstream SlamPoseevoFile;
+std::ofstream GpsPoseevoFile;
+std::ofstream SlamPoseFile;
+std::ofstream GpsPoseFile;
+std::string savePath = "/home/lzg/lab/Learn/lio-livox_ws/src/globalmap_data/";
+int mapNUm = 0;
+int saveMapNum = 0;
+std::mutex _mutexLocalMapQueue;
+pcl::VoxelGrid<PointType> downlocalMap;
+pcl::PassThrough<PointType> disFilter;
+double last_keypose[2]={0,0};
+Eigen::Matrix4d transformLocToMap = Eigen::Matrix4d::Identity();
+Eigen::Quaterniond quatLocToMap = Eigen::Quaterniond::Identity();
+Eigen::Vector3d poseLocToMap = Eigen::Vector3d::Zero();
+
+pcl::PointCloud<PointType>::Ptr localMap(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr localMapDS(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType>::Ptr localMapDSInv(new pcl::PointCloud<PointType>());
+std::queue<Eigen::Matrix4d> _scanPoseQueue;
+std::queue<Eigen::Quaterniond> _scanQuatQueue;
+std::queue<Eigen::Vector3d> _scanVectQueue;
+std::queue<double> _scanTimeQueue;
 
 int WINDOWSIZE;
 bool LidarIMUInited = false;
@@ -23,6 +63,7 @@ tf::StampedTransform laserOdometryTrans;
 tf::TransformBroadcaster* tfBroadcaster;
 ros::Publisher pubGps;
 ros::Publisher pubGlobalMap;
+ros::Publisher pubCurScan;
 
 bool newfullCloud = false;
 
@@ -106,6 +147,59 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg){
   // push IMU msg to queue
   std::unique_lock<std::mutex> lock(_mutexIMUQueue);
   _imuMsgQueue.push(imu_msg);
+}
+
+double gps_yaw = 0;
+double gps_timestamp;
+void gpsFixCallBack(const sensor_msgs::NavSatFixConstPtr &fix_msg){
+    gps_timestamp = fix_msg->header.stamp.toSec();
+    geographic_msgs::GeoPointStampedPtr gps_msg(new geographic_msgs::GeoPointStamped());
+    gps_msg->header = fix_msg->header;
+    gps_msg->position.latitude = fix_msg->latitude;
+    gps_msg->position.longitude = fix_msg->longitude;
+    gps_msg->position.altitude = fix_msg->altitude;
+
+    geodesy::UTMPoint utm_point;
+    geodesy::fromMsg(gps_msg->position, utm_point);
+    double temp_x,temp_y,temp_z;
+    double temp_rx,temp_ry,temp_rz; 
+    temp_x = utm_point.easting - 349350; //SJTU
+    temp_y = utm_point.northing - 3432459;
+    temp_z=0;
+
+    geometry_msgs::Quaternion temp_quat = tf::createQuaternionMsgFromRollPitchYaw(0,0,gps_yaw);
+    GpsPoseevoFile << std::fixed << std::setprecision(4)                
+            << fix_msg->header.stamp.toSec() << ' '
+            << temp_x << ' '
+            << temp_y << ' '
+            << 0 << ' '
+            // << temp_quat.x << ' '
+            // << temp_quat.y << ' '
+            // << temp_quat.z << ' '
+            // << temp_quat.w << std::endl;
+            << 0<< ' '
+            << 0<< ' '
+            << 0 << ' '
+            << 1 << std::endl;
+    GpsPoseFile<< std::fixed << std::setprecision(4) 
+            << fix_msg->header.stamp.toSec() << ' '
+            << temp_x << ' '
+            << temp_y << ' '
+            << 0 << ' '
+            << 0 << ' '
+            << 0 << ' '
+            << gps_yaw<< ' '
+            << std::endl;
+
+}  
+
+void gpdHeadCallBack(const cyber_msgs::HeadingConstPtr &heading_msg) {
+  double temp_rx = 0.0, temp_ry = 0.0, temp_rz;
+  gps_yaw = heading_msg->data;
+  if (gps_yaw >= M_PI)
+    gps_yaw -= 2 * M_PI;
+  else if (gps_yaw <= -M_PI)
+    gps_yaw += 2 * M_PI;
 }
 
 /** \brief get IMU messages in a certain time interval
@@ -380,6 +474,37 @@ void process(){
   Eigen::Vector3d delta_tl = Eigen::Vector3d::Zero();
 	Eigen::Matrix3d delta_Rb = Eigen::Matrix3d::Identity();
 	Eigen::Vector3d delta_tb = Eigen::Vector3d::Zero();
+  std::string poseFilePath = savePath + "localmap/odom.txt";
+  std::string SlamPoseevoFilePath = savePath + "slam_evo.txt";
+  std::string GpsPoseevoFilePath = savePath + "gps_evo.txt";
+  std::string SlamPoseFilePath = savePath + "slam.txt";
+  std::string GpsPoseFilePath = savePath + "gps.txt";
+  std::string local_filepath = savePath+"localmap/";
+
+  char dst_dir[255];
+  strcpy(dst_dir, local_filepath.c_str());
+  int state = access(dst_dir, R_OK|W_OK);
+  if(state == 0){
+    std::cout<<"file exist, delete all files!"<<std::endl;
+    std::string delete_local_str = "rm " + local_filepath + "*";
+    strcpy(dst_dir, delete_local_str.c_str());
+    std::system(dst_dir);
+  }else{
+    std::string mkdir_str = "mkdir " + local_filepath;
+    strcpy(dst_dir, mkdir_str.c_str());
+    std::system(dst_dir);
+    std::cout<<"Create file path "<<local_filepath<<std::endl;
+  }
+  poseFile.open(poseFilePath);
+
+  //记录轨迹
+  if(record_data == true){
+    SlamPoseevoFile.open(SlamPoseevoFilePath);
+    GpsPoseevoFile.open(GpsPoseevoFilePath);
+    SlamPoseFile.open(SlamPoseFilePath);
+    GpsPoseFile.open(GpsPoseFilePath);
+  }
+
  
   //25
   // transformAftMapped.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(0.3563,Eigen::Vector3d::UnitZ())*
@@ -394,6 +519,26 @@ void process(){
   //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitX()));
   
   // transformAftMapped.topRightCorner(3,1) = Eigen::Vector3d(1739.4742,1455.2052,0);
+
+  //11-14-17
+  // transformAftMapped.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(-1.170103673,Eigen::Vector3d::UnitZ())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitY())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitX()));
+  
+  // transformAftMapped.topRightCorner(3,1) = Eigen::Vector3d(1584.7611,1402.1700,0);
+
+  //11-14-16
+  // transformAftMapped.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(-1.222463551,Eigen::Vector3d::UnitZ())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitY())*
+  //                            Eigen::AngleAxisd(0,Eigen::Vector3d::UnitX())); //-2.7409
+  
+  // transformAftMapped.topRightCorner(3,1) = Eigen::Vector3d(1583.7022,1401.7214,0);
+
+transformAftMapped.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(-2.8074,Eigen::Vector3d::UnitZ())*
+                             Eigen::AngleAxisd(0,Eigen::Vector3d::UnitY())*
+                             Eigen::AngleAxisd(0,Eigen::Vector3d::UnitX()));
+  
+transformAftMapped.topRightCorner(3,1) = Eigen::Vector3d(1927.1312,1527.2840,0);
 
 
   std::vector<sensor_msgs::ImuConstPtr> vimuMsg;
@@ -541,6 +686,13 @@ void process(){
 
 	    // publish odometry rostopic
 	    pubOdometry(transformTobeMapped, lidar_list->front().timeStamp); //transformTobeMapped是最后的结果
+      
+      //发布当前帧给后端优化使用
+      sensor_msgs::PointCloud2 scanCloudMsg;
+      pcl::toROSMsg(*(lidar_list->front().laserCloud), scanCloudMsg);
+      scanCloudMsg.header.frame_id = "/world";
+      scanCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
+      pubCurScan.publish(scanCloudMsg);
 
       // publish lidar points
       int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
@@ -560,8 +712,11 @@ void process(){
       //此处为全局地图显示
       _mutexMapQueue.lock();
       _globalMapQueue.push(*laserCloudAfterEstimate);
-      _mutexMapQueue.unlock();
-
+      _scanPoseQueue.push(transformTobeMapped);
+      _scanQuatQueue.push(lidar_list->front().Q);
+      _scanVectQueue.push(lidar_list->front().P);
+      _scanTimeQueue.push(lidar_list->front().timeStamp);
+      _mutexMapQueue.unlock();     
 
 	    // if tightly coupled IMU message, start IMU initialization
 	    if(IMU_Mode > 1 && !LidarIMUInited){
@@ -614,30 +769,226 @@ void process(){
   }
 }
 
-//全局地图显示
+//全局地图显示 记录全局和局部地图（帧叠加）
+// double temp_time;
+// void publishGlobalMap(){
+//     _mutexMapQueue.lock();
+//     while(!_globalMapQueue.empty()){
+//       pcl::PointCloud<PointType> temp_pointcloud;
+//       Eigen::Matrix4d temp_transform = _scanPoseQueue.front();
+//       Eigen::Quaterniond temp_quaternion = _scanQuatQueue.front();
+//       Eigen::Vector3d temp_position = _scanVectQueue.front();
+//       temp_pointcloud = _globalMapQueue.front();
+//       temp_time = _scanTimeQueue.front();
+//       _globalMapQueue.pop();
+//       _scanPoseQueue.pop();
+//       _scanQuatQueue.pop();
+//       _scanVectQueue.pop();
+//       _scanTimeQueue.pop();
+
+//       *globalMap += temp_pointcloud;
+//       *localMap += temp_pointcloud;
+//       if(mapNUm == 0)
+//         transformLocToMap = temp_transform;
+//         quatLocToMap = temp_quaternion;
+//         poseLocToMap = temp_position;
+//       mapNUm++;
+//     } 
+//     _mutexMapQueue.unlock();
+
+//     //局部地图添加保存
+//     if(mapNUm>10){
+//       downlocalMap.setLeafSize(0.1, 0.1, 0.1);
+//       downlocalMap.setInputCloud(localMap);
+//       downlocalMap.filter(*localMapDS);
+//       Eigen::Matrix4d transformLocToMapInv = transformLocToMap.inverse();
+//       for (int i = 0; i < localMapDS->points.size(); i++) {
+//         PointType temp_point;
+//         MAP_MANAGER::pointAssociateToMap(&localMapDS->points[i], &temp_point, transformLocToMapInv); 
+//         localMapDSInv->push_back(temp_point);
+//       }
+
+//       std::string file_name = savePath + "localmap/localmap_"+ std::to_string(saveMapNum)+".ply";
+//       // pcl::io::savePLYFileASCII(file_name ,*localMapDSInv);
+//       pcl::io::savePLYFileASCII(file_name ,*localMapDS);
+//       // poseFilePath<<std::fixed<<std::setprecision(4)<<transformLocToMap<<std::endl;
+//       poseFile<<transformLocToMap<<std::endl;
+
+//       if(record_data == true){
+//         tf::Quaternion q(quatLocToMap.x(),quatLocToMap.y(),quatLocToMap.z(),quatLocToMap.w());
+//         double roll,pitch,yaw;
+//         tf::Matrix3x3(q).getRPY(roll,pitch,yaw);
+//         if(record_data == true){
+//           SlamPoseevoFile << std::fixed << std::setprecision(4)                
+//                   << temp_time << ' '
+//                   << poseLocToMap[0] << ' '
+//                   << poseLocToMap[1] << ' '
+//                   << 0 << ' '
+//                   // << quatLocToMap.x() << ' '
+//                   // << quatLocToMap.y() << ' '
+//                   // << quatLocToMap.z() << ' '
+//                   // << quatLocToMap.w() << std::endl;
+//                     << 0<< ' '
+//                   << 0<< ' '
+//                   << 0 << ' '
+//                   << 1 << std::endl;
+//           SlamPoseFile<< std::fixed << std::setprecision(4) 
+//                   <<temp_time << ' '
+//                   << poseLocToMap[0] << ' '
+//                   << poseLocToMap[1] << ' '
+//                   << 0 << ' '
+//                   << roll << ' '
+//                   << pitch << ' '
+//                   << yaw<< ' '
+//                   << std::endl;
+//         }
+
+//       }
+//       localMap.reset(new pcl::PointCloud<PointType>());
+//       localMapDS.reset(new pcl::PointCloud<PointType>());
+//       localMapDSInv.reset(new pcl::PointCloud<PointType>());
+//       mapNUm = 0;
+//       saveMapNum++;
+//     }
+
+//     downFullMap.setLeafSize(0.5, 0.5, 0.5);
+//     downFullMap.setInputCloud(globalMap);
+//     downFullMap.filter(*globalMapDS);
+//     *globalMap = *globalMapDS;
+//     sensor_msgs::PointCloud2 tempCloud;
+//     pcl::toROSMsg(*globalMap,tempCloud);
+//     tempCloud.header.stamp = ros::Time::now();
+//     tempCloud.header.frame_id = "/world";
+//     pubGlobalMap.publish(tempCloud);
+// }
+
+//全局地图显示 记录全局和局部地图（局部切分）
+double temp_time;
 void publishGlobalMap(){
+    clock_t startTime = clock();
     _mutexMapQueue.lock();
     while(!_globalMapQueue.empty()){
       pcl::PointCloud<PointType> temp_pointcloud;
+      Eigen::Matrix4d temp_transform = _scanPoseQueue.front();
+      Eigen::Quaterniond temp_quaternion = _scanQuatQueue.front();
+      Eigen::Vector3d temp_position = _scanVectQueue.front();
       temp_pointcloud = _globalMapQueue.front();
+      temp_time = _scanTimeQueue.front();
       _globalMapQueue.pop();
-      *globalMap += temp_pointcloud;
+      _scanPoseQueue.pop();
+      _scanQuatQueue.pop();
+      _scanVectQueue.pop();
+      _scanTimeQueue.pop();
+
+      *readinMap += temp_pointcloud;
+      transformLocToMap = temp_transform;
+      quatLocToMap = temp_quaternion;
+      poseLocToMap = temp_position;
     } 
     _mutexMapQueue.unlock();
-    downFullMap.setLeafSize(0.5, 0.5, 0.5);
-    downFullMap.setInputCloud(globalMap);
-    downFullMap.filter(*globalMapDS);
-    *globalMap = *globalMapDS;
+    *globalMap += *readinMap;
+    *localMap += *readinMap;
+    readinMap.reset(new pcl::PointCloud<PointType>());
+
+    //局部地图添加保存
+    if(sqrt(pow((poseLocToMap[0] - last_keypose[0]),2) + pow((poseLocToMap[1] - last_keypose[1]),2))>3){
+      clock_t t1 = clock();
+      std::cout<<"dis="<<sqrt(pow((poseLocToMap[0] - last_keypose[0]),2) + pow((poseLocToMap[1] - last_keypose[1]),2))<<" m"<<std::endl;
+      // *localMap = *globalMap;
+      // disFilter.setInputCloud(localMap);
+
+      // disFilter.setFilterFieldName("x");
+      // disFilter.setFilterLimits(poseLocToMap[0]-80, poseLocToMap[0]+80);
+      // disFilter.filter(*localMap);
+
+      // disFilter.setFilterFieldName("y");
+      // disFilter.setFilterLimits(poseLocToMap[1]-80, poseLocToMap[1]+80);
+      // disFilter.filter(*localMap);
+
+      // disFilter.setFilterFieldName("z");
+      // disFilter.setFilterLimits(-80, 80);
+      // disFilter.filter(*localMap);
+
+      downFullMap.setLeafSize(1, 1, 1);
+      downFullMap.setInputCloud(globalMap);
+      downFullMap.filter(*globalMapDS);
+      *globalMap = *globalMapDS;
+
+      downLocalMap.setLeafSize(0.8, 0.8, 0.4);
+      downLocalMap.setInputCloud(localMap);
+      downLocalMap.filter(*localMapDS);
+      *localMap = *localMapDS;
+      localMapDS.reset(new pcl::PointCloud<PointType>());
+
+      clock_t t2 = clock();
+      for(int i = 0; i < localMap->size(); i++){
+        double dis = sqrt(pow((localMap->points[i].x - poseLocToMap[0]),2) + pow((localMap->points[i].y - poseLocToMap[1]),2));
+        if(dis < 80){
+          localMapDS->points.push_back(localMap->points[i]);
+        }
+      }
+      *localMap = *localMapDS;
+      pcl::PointCloud<pcl::PointXYZI>::Ptr local_output(new pcl::PointCloud<pcl::PointXYZI>());
+      pcl::copyPointCloud(*localMap,*local_output);
+
+      clock_t t3 = clock();
+      std::cout<<"disfilter="<<(double)(t3 - t2)/CLOCKS_PER_SEC * 1000<<" ms"<<std::endl;
+
+      std::string file_name = savePath + "localmap/localmap_"+ std::to_string(saveMapNum)+".ply";
+      // pcl::io::savePLYFileASCII(file_name ,*localMapDSInv);
+      pcl::io::savePLYFileASCII(file_name ,*local_output);
+      // poseFilePath<<std::fixed<<std::setprecision(4)<<transformLocToMap<<std::endl;
+      poseFile<<transformLocToMap<<std::endl;
+
+      if(record_data == true){
+        tf::Quaternion q(quatLocToMap.x(),quatLocToMap.y(),quatLocToMap.z(),quatLocToMap.w());
+        double roll,pitch,yaw;
+        tf::Matrix3x3(q).getRPY(roll,pitch,yaw);
+        SlamPoseevoFile << std::fixed << std::setprecision(4)                
+                  << temp_time << ' '
+                  << poseLocToMap[0] << ' '
+                  << poseLocToMap[1] << ' '
+                  << 0 << ' '
+                  // << quatLocToMap.x() << ' '
+                  // << quatLocToMap.y() << ' '
+                  // << quatLocToMap.z() << ' '
+                  // << quatLocToMap.w() << std::endl;
+                    << 0<< ' '
+                  << 0<< ' '
+                  << 0 << ' '
+                  << 1 << std::endl;
+        SlamPoseFile<< std::fixed << std::setprecision(4) 
+                  <<temp_time << ' '
+                  << poseLocToMap[0] << ' '
+                  << poseLocToMap[1] << ' '
+                  << 0 << ' '
+                  << roll << ' '
+                  << pitch << ' '
+                  << yaw<< ' '
+                  << std::endl;
+      }
+      last_keypose[0] = poseLocToMap[0];
+      last_keypose[1] = poseLocToMap[1];
+      localMapDS.reset(new pcl::PointCloud<PointType>());
+      localMapDSInv.reset(new pcl::PointCloud<PointType>());
+      mapNUm = 0;
+      saveMapNum++;
+      clock_t t4 = clock();
+      //std::cout<<"Procsee time="<<(double)(t4 - t1)/CLOCKS_PER_SEC * 1000<<" ms"<<std::endl;
+    }
+
     sensor_msgs::PointCloud2 tempCloud;
     pcl::toROSMsg(*globalMap,tempCloud);
     tempCloud.header.stamp = ros::Time::now();
     tempCloud.header.frame_id = "/world";
     pubGlobalMap.publish(tempCloud);
+    clock_t t2 = clock();
+    //std::cout<<"All cost time="<<(double)(t2 - startTime)/CLOCKS_PER_SEC * 1000<<" ms"<<std::endl;
 }
 
 //显示线程
 void visualizationThread(){
-  ros::Rate rate(0.2);
+  ros::Rate rate(4);
   while(ros::ok()){
     rate.sleep();
     publishGlobalMap();
@@ -672,6 +1023,11 @@ int main(int argc, char** argv)
   exPbl = -1.0 * exRbl * exPlb;
 
   ros::Subscriber subFullCloud = nodeHandler.subscribe<sensor_msgs::PointCloud2>("/livox_full_cloud", 10, fullCallBack);
+  // if(record_data == true){
+  //   std::cout<<"hah"<<std::endl;
+    ros::Subscriber subGpsFix = nodeHandler.subscribe<sensor_msgs::NavSatFix>("/strong/fix", 10, gpsFixCallBack);
+    ros::Subscriber subGpsHeading = nodeHandler.subscribe<cyber_msgs::Heading>("/strong/heading", 10, gpdHeadCallBack);
+  // }
   ros::Subscriber sub_imu;
   if(IMU_Mode > 0)
     sub_imu = nodeHandler.subscribe("/livox/imu_3WEDH5900101251", 2000, imu_callback, ros::TransportHints().unreliable());
@@ -685,6 +1041,7 @@ int main(int argc, char** argv)
   pubLaserOdometryPath = nodeHandler.advertise<nav_msgs::Path> ("/livox_odometry_path_mapped", 5);
 	pubGps = nodeHandler.advertise<sensor_msgs::NavSatFix>("/lidar", 1000);
   pubGlobalMap = nodeHandler.advertise<sensor_msgs::PointCloud2>("/global_map", 1000);
+  pubCurScan = nodeHandler.advertise<sensor_msgs::PointCloud2>("/cur_scan", 1000);
 
   tfBroadcaster = new tf::TransformBroadcaster();
 
@@ -696,11 +1053,8 @@ int main(int argc, char** argv)
   std::thread thread_visual{visualizationThread};
   ros::spin();
   std::cout<<"save map!"<<std::endl;
-  // downFullMap.setLeafSize(0.3, 0.3, 0.3);
-  // downFullMap.setInputCloud(globalMap);
-  // downFullMap.filter(*globalMapDS);
-  
-  pcl::io::savePLYFileASCII("/home/lzg/Desktop/global.ply", *globalMapDS);
+  std::string globalFilepath = savePath + "global.ply";
+  pcl::io::savePLYFileASCII(globalFilepath, *globalMapDS);
 
   return 0;
 }

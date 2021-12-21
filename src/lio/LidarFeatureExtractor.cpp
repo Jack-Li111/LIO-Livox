@@ -597,8 +597,8 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
   laserConerFeature->clear();
   laserSurfFeature->clear();
   laserCloud->clear();
-  laserCloud->reserve(15000*N_SCANS);
-  for(auto & ptr : vlines){
+  laserCloud->reserve(15000*N_SCANS); //？
+  for(auto & ptr : vlines){ //按照N_SCANS分组
     ptr->clear();
   }
   for(auto & v : vcorner){
@@ -608,16 +608,17 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
     v.clear();
   }
 
+  //下面四行是和无分割的区别
   int dnum = msg->points.size();
 
   int *idtrans = (int*)calloc(dnum, sizeof(int));
-  float *data=(float*)calloc(dnum*4,sizeof(float));
+  float *data=(float*)calloc(dnum*4,sizeof(float)); //记录每个点xyzi
   int point_num = 0;
 
   double timeSpan = ros::Time().fromNSec(msg->points.back().offset_time).toSec();
   PointType point;
   for(const auto& p : msg->points){
-
+    //去除异常点
     int line_num = (int)p.line;
     if(line_num > Used_Line-1) continue;
     if(p.x < 0.01) continue;
@@ -630,21 +631,21 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
     point.y = p.y;
     point.z = p.z;
     point.intensity = p.reflectivity;
-    point.normal_x = ros::Time().fromNSec(p.offset_time).toSec() /timeSpan;
+    point.normal_x = ros::Time().fromNSec(p.offset_time).toSec() /timeSpan; 
     point.normal_y = _int_as_float(line_num);
     laserCloud->push_back(point);
 
     data[point_num*4+0] = point.x;
     data[point_num*4+1] = point.y;
     data[point_num*4+2] = point.z;
-    data[point_num*4+3] = point.intensity;
+    data[point_num*4+3] = point.intensity; //与无分割的区别
 
 
     point_num++;
   }
 
   PCSeg pcseg;
-  pcseg.DoSeg(idtrans,data,dnum);
+  pcseg.DoSeg(idtrans,data,dnum); //做地面分割和聚类以及前后景的分割 idtrans：分类后的类别，data：点云数据，dnum：点云数量
 
   std::size_t cloud_num = laserCloud->size();
   for(std::size_t i=0; i<cloud_num; ++i){
@@ -655,7 +656,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
 
   std::thread threads[N_SCANS];
   for(int i=0; i<N_SCANS; ++i){
-    threads[i] = std::thread(&LidarFeatureExtractor::detectFeaturePoint3, this, std::ref(vlines[i]),std::ref(vcorner[i]));
+    threads[i] = std::thread(&LidarFeatureExtractor::detectFeaturePoint3, this, std::ref(vlines[i]),std::ref(vcorner[i]));//筛选corner点
   }
 
   for(int i=0; i<N_SCANS; ++i){
@@ -670,7 +671,7 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
     }
   }
 
-  detectFeaturePoint2(laserCloud, laserSurfFeature, laserNonFeature);
+  detectFeaturePoint2(laserCloud, laserSurfFeature, laserNonFeature);//筛选Surf点和Non点
 
   for(std::size_t i=0; i<cloud_num; ++i){
     float dis = laserCloud->points[i].x * laserCloud->points[i].x

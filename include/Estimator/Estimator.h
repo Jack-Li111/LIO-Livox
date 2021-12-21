@@ -3,6 +3,8 @@
 
 #include <ros/ros.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <pcl/common/common.h>
+#include <pcl/common/transforms.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <sensor_msgs/NavSatFix.h>
 #include <visualization_msgs/Marker.h>
@@ -20,6 +22,25 @@
 #include "utils/ceresfunc.h"
 #include "IMUIntegrator/IMUIntegrator.h"
 #include <chrono>
+
+struct PointXYZIRPYT
+{
+	PCL_ADD_POINT4D     
+	PCL_ADD_INTENSITY;  
+	float roll;         
+	float pitch;
+	float yaw;
+	double time;
+	EIGEN_MAKE_ALIGNED_OPERATOR_NEW   
+} EIGEN_ALIGN16;                    
+
+POINT_CLOUD_REGISTER_POINT_STRUCT (PointXYZIRPYT,
+								(float, x, x) (float, y, y)
+								(float, z, z) (float, intensity, intensity)
+								(float, roll, roll) (float, pitch, pitch) (float, yaw, yaw)
+								(double, time, time))
+
+typedef PointXYZIRPYT  PointTypePose;
 
 class Estimator{
 	typedef pcl::PointXYZINormal PointType;

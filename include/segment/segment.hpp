@@ -35,13 +35,13 @@ using namespace std;
 #define GND_IMG_OFFX1 40
 #define GND_IMG_OFFY1 40
 
-#define DN_SAMPLE_IMG_NX 600 //(GND_IMG_NX)
+#define DN_SAMPLE_IMG_NX 600 //(GND_IMG_NX) x方向像素个数
 #define DN_SAMPLE_IMG_NY 200 //(GND_IMG_NY)
 #define DN_SAMPLE_IMG_NZ 100
-#define DN_SAMPLE_IMG_DX 0.4 //(GND_IMG_DX)
+#define DN_SAMPLE_IMG_DX 0.4 //(GND_IMG_DX) x方向分辨率
 #define DN_SAMPLE_IMG_DY 0.4 //(GND_IMG_DY)
 #define DN_SAMPLE_IMG_DZ 0.2
-#define DN_SAMPLE_IMG_OFFX 40 //(GND_IMG_OFFX)
+#define DN_SAMPLE_IMG_OFFX 40 //(GND_IMG_OFFX) x方向偏置
 #define DN_SAMPLE_IMG_OFFY 40 //(GND_IMG_OFFY)
 #define DN_SAMPLE_IMG_OFFZ 2.5//2.5
 

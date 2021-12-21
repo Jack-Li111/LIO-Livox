@@ -44,7 +44,7 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
         int iz=(fPoints1[pid*4+2]+DN_SAMPLE_IMG_OFFZ)/DN_SAMPLE_IMG_DZ;//认为地面为-1.8？ -2.5~17.5
 
         idtrans1[pid]=-1;
-        if((ix>=0)&&(ix<DN_SAMPLE_IMG_NX)&&(iy>=0)&&(iy<DN_SAMPLE_IMG_NY)&&(iz>=0)&&(iz<DN_SAMPLE_IMG_NZ)) //DN_SAMPLE_IMG_OFFX = 0 因此只保留前半块
+        if((ix>=0)&&(ix<DN_SAMPLE_IMG_NX)&&(iy>=0)&&(iy<DN_SAMPLE_IMG_NY)&&(iz>=0)&&(iz<DN_SAMPLE_IMG_NZ)) //DN_SAMPLE_IMG_OFFX = 0 因此只保留前半块？
         {
             idtrans1[pid]=iz*DN_SAMPLE_IMG_NX*DN_SAMPLE_IMG_NY+iy*DN_SAMPLE_IMG_NX+ix; //记录这个点对应的索引
             if(pVImg[idtrans1[pid]]==0)//没有访问过，肯定栅格内会有重复的，所以fPoints2只取第一个
@@ -71,11 +71,12 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
     tmpPos[3]=0;
     tmpPos[4]=0;
     tmpPos[5]=-2.04;
-    GetGndPos(tmpPos,fPoints2,pntNum); //tempPos是更新后的地面搜索点 & 平均法向量 ys
+    GetGndPos(tmpPos,fPoints2,pntNum); //tempPos是更新后的平均法向量 & 地面搜索点
     memcpy(this->gndPos,tmpPos,6*sizeof(float));
     
     this->posFlag=1;//(this->posFlag+1)%SELF_CALI_FRAMES;
-
+    // std::cout<<"this->gndPos="<<this->gndPos[0]<<" "<<this->gndPos[1]<<" "<<this->gndPos[2]
+    //          <<" "<<this->gndPos[3]<<" "<<this->gndPos[4]<<" "<<this->gndPos[5]<<std::endl;
     // 3 点云矫正
     this->CorrectPoints(fPoints2,pntNum,this->gndPos);
     if(this->corPoints!=NULL)

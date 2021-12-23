@@ -30,6 +30,7 @@
 #include <cmath>
 #include <algorithm>
 #include <tf/transform_broadcaster.h>
+#include <pcl/io/ply_io.h>
 
 std::mutex mutexLidar;
 std::queue<sensor_msgs::PointCloud2ConstPtr> lidarQueue;
@@ -63,6 +64,14 @@ pcl::PointCloud<PointTypePose>::Ptr cloudKeyPoses6D(new pcl::PointCloud<PointTyp
 tf::TransformBroadcaster *tf_broadcaster;
 tf::StampedTransform *registration_transform;
 
+pcl::PointCloud<pcl::PointXYZI>::Ptr localMap(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr localMapDS(new pcl::PointCloud<pcl::PointXYZI>());
+pcl::PointCloud<pcl::PointXYZI>::Ptr localMapDSInv(new pcl::PointCloud<pcl::PointXYZI>());
+std::string savePath = "/home/lzg/lab/Learn/lio-livox_ws/src/globalmap_data_gps/";
+int saveMapNum = 0;
+int mapNUm = 0;
+std::ofstream poseFile;
+
 float pointDistance(pcl::PointXYZI p)
 {
     return sqrt(p.x*p.x + p.y*p.y + p.z*p.z);
@@ -74,34 +83,34 @@ float pointDistance(pcl::PointXYZI p1, pcl::PointXYZI p2)
 
 //降采样存起来处理
 void fullCallBack(const sensor_msgs::PointCloud2ConstPtr &msg){
-  std::cout<<"fuck21"<<std::endl;
+  
   std::unique_lock<std::mutex> lock(mutexLidar);
   lidarQueue.push(msg);
-  std::cout<<"fuck21"<<std::endl;
+  
   
 }
 
 void poseCallBack(const nav_msgs::OdometryConstPtr &msg){
-  std::cout<<"fuck22"<<std::endl;
+  
   std::unique_lock<std::mutex> lock(mutexOdometry);
   odomQueue.push(msg);
-  std::cout<<"fuck22"<<std::endl;
+  
   
 }
 
 void gpsCallBack(const sensor_msgs::NavSatFixConstPtr &msg){
-  std::cout<<"fuck23"<<std::endl;
+  
   std::unique_lock<std::mutex> lock(mutexGps);
   gpsQueue.push(msg);
-  std::cout<<"fuck23"<<std::endl;
+  
   
 }
 
 void gpsTimeCallBack(const sensor_msgs::TimeReferenceConstPtr &msg){
-  std::cout<<"fuck24"<<std::endl;
+  
   std::unique_lock<std::mutex> lock(mutexGpsTime);
   gpsTimeQueue.push(msg);
-  std::cout<<"fuck24"<<std::endl;
+  
   
 }
 
@@ -140,7 +149,7 @@ void addOdomFactor(nav_msgs::Odometry odomIn){
     initialEstimate.insert(count_num, poseTo); //??
   }
   count_num ++;
-  std::cout<<"count_num="<<count_num<<std::endl;
+  // std::cout<<"count_num="<<count_num<<std::endl;
 }
 
 pcl::PointXYZI llaToUtm(double latitude, double longitude, double altitude){
@@ -183,11 +192,11 @@ bool findLastGpsPose,findCurGpsPose = false;
 //     }
 //   }
 //   lock_gps.unlock();
-//   std::cout<<"fuck13"<<std::endl;
+//   
 //   if(findCurGpsPose == false || lastGpsTime == -1){
 //     return;
 //   }
-//   std::cout<<"fuck16"<<std::endl;
+//   
 //   findCurGpsPose = false;
 //   double noise_x, noise_y, noise_z;
 //   noise_x = (lastGps.position_covariance[0] + curGps.position_covariance[0])/2;
@@ -196,7 +205,7 @@ bool findLastGpsPose,findCurGpsPose = false;
 //   std::cout<<"  noise:"<<noise_x<<" "<<noise_y<<" "<<noise_z<<std::endl;
 //   if (noise_x > 2.0 || noise_y > 2.0)
 //     return;
-//   std::cout<<"fuck14"<<std::endl;
+//   
 //   std::vector<double> gpsFusionPose(3,0), gpsLastPose, gpsCurPose;
 //   gpsLastPose = llaToUtm(lastGps.latitude, lastGps.longitude, lastGps.altitude); 
 //   gpsCurPose = llaToUtm(curGps.latitude, curGps.longitude, curGps.altitude); 
@@ -384,7 +393,7 @@ void publishFrames()
 }
 
 void process(){
-  while(ros::ok){
+  while(ros::ok()){
     pcl::PointCloud<pcl::PointXYZI>::Ptr cloudIn(new pcl::PointCloud<pcl::PointXYZI>());
     nav_msgs::Odometry slamOdomtry;
     if((!lidarQueue.empty()) && (!odomQueue.empty())){
@@ -399,14 +408,13 @@ void process(){
       odomQueue.pop();
       lock_odom.unlock();;
       std::lock_guard<std::mutex> lock(mtx);
-      std::cout<<"fuck9"<<std::endl;
+      
       addOdomFactor(slamOdomtry);
-      std::cout<<"fuck10"<<std::endl;
       addOdomGpsFactor(time_cur_lidar);
-      std::cout<<"fuck1"<<std::endl;
+      
       isam->update(gtSAMgraph, initialEstimate);
       isam->update();
-      std::cout<<"fuck2"<<std::endl;
+      
       if (aLoopIsClosed == true)
       {
           isam->update();
@@ -415,7 +423,7 @@ void process(){
           isam->update();
           isam->update();
       }
-      std::cout<<"fuck3"<<std::endl;
+      
       gtSAMgraph.resize(0);
       initialEstimate.clear();
       
@@ -423,7 +431,7 @@ void process(){
       pcl::PointXYZI thisPose3D;
       PointTypePose thisPose6D;
       gtsam::Pose3 latestEstimate;
-      std::cout<<"fuck4"<<std::endl;
+      
       isamCurrentEstimate = isam->calculateEstimate();
       latestEstimate = isamCurrentEstimate.at<gtsam::Pose3>(isamCurrentEstimate.size()-1);
       // cout << "****************************************************" << endl;
@@ -446,7 +454,7 @@ void process(){
       cloudKeyPoses6D->push_back(thisPose6D);
 
       poseCoveriance = isam->marginalCovariance(isamCurrentEstimate.size()-1);
-      std::cout<<"fuck5"<<std::endl;
+      
 
       // save updated transform
       // transformTobeMapped[0] = latestEstimate.rotation().roll();
@@ -463,18 +471,18 @@ void process(){
       downSizePointCloud.setInputCloud(cloudIn);
       downSizePointCloud.filter(*thisKeyFrame);
       cloudKeyFrames.push_back(thisKeyFrame);
-      std::cout<<"fuck5"<<std::endl;
+      
       // save path for visualization
       //updatePath(thisPose6D);
       correctPoses();
-      std::cout<<"fuck6"<<std::endl;
+      
       publishFrames();
-      std::cout<<"fuck7"<<std::endl;
+      
     }
   }
 
 }
-
+pcl::PointCloud<pcl::PointXYZI>::Ptr globalMapKeyFramesSave(new pcl::PointCloud<pcl::PointXYZI>());
 void publishGlobalMap()
 {
     if (pubLaserCloudSurround.getNumSubscribers() == 0)
@@ -483,7 +491,7 @@ void publishGlobalMap()
     if (cloudKeyPoses3D->points.empty() == true)
         return;
 
-    pcl::KdTreeFLANN<pcl::PointXYZI>::Ptr kdtreeGlobalMap(new pcl::KdTreeFLANN<pcl::PointXYZI>());;
+    pcl::KdTreeFLANN<pcl::PointXYZI>::Ptr kdtreeGlobalMap(new pcl::KdTreeFLANN<pcl::PointXYZI>());
     pcl::PointCloud<pcl::PointXYZI>::Ptr globalMapKeyPoses(new pcl::PointCloud<pcl::PointXYZI>());
     pcl::PointCloud<pcl::PointXYZI>::Ptr globalMapKeyPosesDS(new pcl::PointCloud<pcl::PointXYZI>());
     pcl::PointCloud<pcl::PointXYZI>::Ptr globalMapKeyFrames(new pcl::PointCloud<pcl::PointXYZI>());
@@ -519,15 +527,90 @@ void publishGlobalMap()
     downSizeFilterGlobalMapKeyFrames.setInputCloud(globalMapKeyFrames);
     downSizeFilterGlobalMapKeyFrames.filter(*globalMapKeyFramesDS);
     std::cout<<"  globalMapKeyFramesDS.size="<<globalMapKeyFramesDS->points.size()<<std::endl;
+    *globalMapKeyFramesSave = *globalMapKeyFramesDS;
     publishCloud(&pubLaserCloudSurround, globalMapKeyFramesDS, timeLaserInfoStamp, worldFrame);
 }
 
 void visualization(){
-  ros::Rate rate(0.2);
+  ros::Rate rate(0.5);
   while (ros::ok()){
     rate.sleep();
     publishGlobalMap();
   }
+  std::string glonalmap_name = savePath + "globalmap.ply";
+  pcl::io::savePLYFile(glonalmap_name,*globalMapKeyFramesSave);
+  std::cout<<"Save all map"<<std::endl;
+
+  //帧叠加
+  // for (int i = 0; i < (int)cloudKeyPoses3D->size(); ++i){
+  //   int thisKeyInd = (int)cloudKeyPoses3D->points[i].intensity;
+  //   *localMap += *transformPointCloud(cloudKeyFrames[thisKeyInd],  &cloudKeyPoses6D->points[thisKeyInd]);
+  //   mapNUm++;
+  //   if(mapNUm>10){
+  //     pcl::VoxelGrid<pcl::PointXYZI> downLocalMap;
+  //     downLocalMap.setLeafSize(0.1, 0.1, 0.1);
+  //     downLocalMap.setInputCloud(localMap);
+  //     downLocalMap.filter(*localMapDS);
+  //     std::string file_name = savePath + "localmap/localmap_"+ std::to_string(saveMapNum)+".ply";
+  //     pcl::io::savePLYFileASCII(file_name ,*localMapDS);
+  //     Eigen::Matrix4d transformLocToMap  = Eigen::Matrix4d::Identity();
+  //     transformLocToMap.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(cloudKeyPoses6D->points[thisKeyInd].yaw,Eigen::Vector3d::UnitZ())*
+  //                            Eigen::AngleAxisd(cloudKeyPoses6D->points[thisKeyInd].pitch,Eigen::Vector3d::UnitY())*
+  //                            Eigen::AngleAxisd(cloudKeyPoses6D->points[thisKeyInd].roll,Eigen::Vector3d::UnitX()));
+  
+  //     transformLocToMap.topRightCorner(3,1) = Eigen::Vector3d(cloudKeyPoses6D->points[thisKeyInd].x, cloudKeyPoses6D->points[thisKeyInd].y, cloudKeyPoses6D->points[thisKeyInd].z);
+
+  //     poseFile<<transformLocToMap<<std::endl;
+
+  //     localMap.reset(new pcl::PointCloud<pcl::PointXYZI>());
+  //     localMapDS.reset(new pcl::PointCloud<pcl::PointXYZI>());
+  //     mapNUm = 0;
+  //     saveMapNum++;
+  //   }
+  //     //局部地图添加保存
+  // }
+  double last_keypose[2]={0,0};
+  //局部切分
+  for (int i = 0; i < (int)cloudKeyPoses3D->size(); ++i){
+    int thisKeyInd = (int)cloudKeyPoses3D->points[i].intensity;
+    *localMap += *transformPointCloud(cloudKeyFrames[thisKeyInd],  &cloudKeyPoses6D->points[thisKeyInd]);
+    mapNUm++;
+    Eigen::Vector3d poseLocToMap(cloudKeyPoses6D->points[thisKeyInd].x, cloudKeyPoses6D->points[thisKeyInd].y, cloudKeyPoses6D->points[thisKeyInd].z);
+
+    if(sqrt(pow((poseLocToMap[0] - last_keypose[0]),2) + pow((poseLocToMap[1] - last_keypose[1]),2))>3){
+      pcl::VoxelGrid<pcl::PointXYZI> downLocalMap;
+      downLocalMap.setLeafSize(0.8, 0.8, 0.4);
+      downLocalMap.setInputCloud(localMap);
+      downLocalMap.filter(*localMapDS);
+      *localMap = *localMapDS;
+      localMapDS.reset(new pcl::PointCloud<pcl::PointXYZI>());
+      for(int i = 0; i < localMap->size(); i++){
+        double dis = sqrt(pow((localMap->points[i].x - poseLocToMap[0]),2) + pow((localMap->points[i].y - poseLocToMap[1]),2));
+        if(dis < 80){
+          localMapDS->points.push_back(localMap->points[i]);
+        }
+      }
+      std::string file_name = savePath + "localmap/localmap_"+ std::to_string(saveMapNum)+".ply";
+      pcl::io::savePLYFileASCII(file_name ,*localMapDS);
+      Eigen::Matrix4d transformLocToMap  = Eigen::Matrix4d::Identity();
+      transformLocToMap.topLeftCorner(3,3) = Eigen::Matrix3d(Eigen::AngleAxisd(cloudKeyPoses6D->points[thisKeyInd].yaw,Eigen::Vector3d::UnitZ())*
+                             Eigen::AngleAxisd(cloudKeyPoses6D->points[thisKeyInd].pitch,Eigen::Vector3d::UnitY())*
+                             Eigen::AngleAxisd(cloudKeyPoses6D->points[thisKeyInd].roll,Eigen::Vector3d::UnitX()));
+  
+      transformLocToMap.topRightCorner(3,1) = Eigen::Vector3d(cloudKeyPoses6D->points[thisKeyInd].x, cloudKeyPoses6D->points[thisKeyInd].y, cloudKeyPoses6D->points[thisKeyInd].z);
+
+      poseFile<<transformLocToMap<<std::endl;
+
+      last_keypose[0] = poseLocToMap[0];
+      last_keypose[1] = poseLocToMap[1];
+      localMapDS.reset(new pcl::PointCloud<pcl::PointXYZI>());
+      localMapDSInv.reset(new pcl::PointCloud<pcl::PointXYZI>());
+      mapNUm = 0;
+      saveMapNum++;
+    }
+      //局部地图添加保存
+  }
+  std::cout<<"all local map saved"<<std::endl;
 }
 
 int main(int argc, char** argv){
@@ -537,6 +620,10 @@ int main(int argc, char** argv){
   ros::Subscriber subCloudPose = nh.subscribe("livox_odometry_mapped", 10, poseCallBack);
   ros::Subscriber subGps = nh.subscribe("fix", 10, gpsCallBack);
   ros::Subscriber subGpsTime = nh.subscribe("time_reference", 10, gpsTimeCallBack);
+
+  std::string poseFilePath = savePath + "localmap/odom.txt";
+  poseFile.open(poseFilePath);
+  
   odometryFrame = "/livox_frame";
   worldFrame = "/world";
   pubRecentKeyFrames = nh.advertise<sensor_msgs::PointCloud2>("lio_livox/mapping/map_local", 1);
@@ -554,12 +641,29 @@ int main(int argc, char** argv){
   registration_transform->frame_id_ = "/world";
   registration_transform->child_frame_id_ = "/opt_frame";
 
+  std::string local_filepath = savePath+"localmap/";
+
+  char dst_dir[255];
+  strcpy(dst_dir, local_filepath.c_str());
+  int state = access(dst_dir, R_OK|W_OK);
+  if(state == 0){
+    std::cout<<"file exist, delete all files!"<<std::endl;
+    std::string delete_local_str = "rm " + local_filepath + "*";
+    strcpy(dst_dir, delete_local_str.c_str());
+    std::system(dst_dir);
+  }else{
+    std::string mkdir_str = "mkdir " + local_filepath;
+    strcpy(dst_dir, mkdir_str.c_str());
+    std::system(dst_dir);
+    std::cout<<"Create file path "<<local_filepath<<std::endl;
+  }
+
   std::thread threadProcess{process};
   std::thread threadVisualization{visualization};
   ros::spin();
 
-  threadProcess.join();
   threadVisualization.join();
+  threadProcess.join();
   
   return 0;
 }

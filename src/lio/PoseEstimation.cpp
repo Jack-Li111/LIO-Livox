@@ -25,7 +25,7 @@ std::mutex _mutexMapQueue;
 std::queue<pcl::PointCloud<PointType>> _globalMapQueue;
 
 //局部子图存储
-bool record_data = true;
+bool record_data = false;
 std::ofstream poseFile;
 std::ofstream SlamPoseevoFile;
 std::ofstream GpsPoseevoFile;
@@ -893,7 +893,7 @@ void publishGlobalMap(){
     //局部地图添加保存
     if(sqrt(pow((poseLocToMap[0] - last_keypose[0]),2) + pow((poseLocToMap[1] - last_keypose[1]),2))>3){
       clock_t t1 = clock();
-      std::cout<<"dis="<<sqrt(pow((poseLocToMap[0] - last_keypose[0]),2) + pow((poseLocToMap[1] - last_keypose[1]),2))<<" m"<<std::endl;
+      //std::cout<<"dis="<<sqrt(pow((poseLocToMap[0] - last_keypose[0]),2) + pow((poseLocToMap[1] - last_keypose[1]),2))<<" m"<<std::endl;
       // *localMap = *globalMap;
       // disFilter.setInputCloud(localMap);
 
@@ -932,11 +932,13 @@ void publishGlobalMap(){
       pcl::copyPointCloud(*localMap,*local_output);
 
       clock_t t3 = clock();
-      std::cout<<"disfilter="<<(double)(t3 - t2)/CLOCKS_PER_SEC * 1000<<" ms"<<std::endl;
+      //std::cout<<"disfilter="<<(double)(t3 - t2)/CLOCKS_PER_SEC * 1000<<" ms"<<std::endl;
 
       std::string file_name = savePath + "localmap/localmap_"+ std::to_string(saveMapNum)+".ply";
       // pcl::io::savePLYFileASCII(file_name ,*localMapDSInv);
-      pcl::io::savePLYFileASCII(file_name ,*local_output);
+      if(record_data == true){
+        pcl::io::savePLYFileASCII(file_name ,*local_output);
+      }
       // poseFilePath<<std::fixed<<std::setprecision(4)<<transformLocToMap<<std::endl;
       poseFile<<transformLocToMap<<std::endl;
 
@@ -1052,10 +1054,12 @@ int main(int argc, char** argv)
   std::thread thread_process{process};
   std::thread thread_visual{visualizationThread};
   ros::spin();
-  std::cout<<"save map!"<<std::endl;
-  std::string globalFilepath = savePath + "global.ply";
-  pcl::io::savePLYFileASCII(globalFilepath, *globalMapDS);
 
+  if(record_data == true){
+    std::string globalFilepath = savePath + "global.ply";
+    pcl::io::savePLYFileASCII(globalFilepath, *globalMapDS);
+    std::cout<<"save map!"<<std::endl;
+  }
   return 0;
 }
 

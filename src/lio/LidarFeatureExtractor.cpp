@@ -672,13 +672,16 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
   }
 
   detectFeaturePoint2(laserCloud, laserSurfFeature, laserNonFeature);//筛选Surf点和Non点
+  int block_num = 0,coner_num = 0,flat_num = 0,non_num = 0;
 
   for(std::size_t i=0; i<cloud_num; ++i){
     float dis = laserCloud->points[i].x * laserCloud->points[i].x
                 + laserCloud->points[i].y * laserCloud->points[i].y
                 + laserCloud->points[i].z * laserCloud->points[i].z;
-    if( idtrans[i] > 9 && dis < 50*50){
+    // if( idtrans[i] > 9 && dis < 50*50){ //前景背景分割代码，去掉距离限制去除远处的动态物体
+    if( idtrans[i] > 9){
       laserCloud->points[i].normal_z = 0;
+      //block_num++;
     }
   }
 
@@ -688,16 +691,27 @@ void LidarFeatureExtractor::FeatureExtract_with_segment(const livox_ros_driver::
   laserSurfFeature.reset(new pcl::PointCloud<PointType>());
   laserNonFeature.reset(new pcl::PointCloud<PointType>());
   for(const auto& p : laserCloud->points){
-    if(std::fabs(p.normal_z - 1.0) < 1e-5)
+    if(std::fabs(p.normal_z - 1.0) < 1e-5){
       laserConerFeature->push_back(p);
+      //coner_num++;
+    }
   }
 
   for(const auto& p : laserCloud->points){
-    if(std::fabs(p.normal_z - 2.0) < 1e-5)
+    if(std::fabs(p.normal_z - 2.0) < 1e-5){
       laserSurfFeature->push_back(p);
-    if(std::fabs(p.normal_z - 3.0) < 1e-5)
+      //flat_num++;
+    }
+    if(std::fabs(p.normal_z - 3.0) < 1e-5){
       laserNonFeature->push_back(p);
+      //non_num++;
+    }
   }
+  // std::cout<< " laserCloud->points=" << laserCloud->points.size() <<std::endl;
+  // std::cout<< " block_num=" << block_num <<std::endl;
+  // std::cout<< " coner_num=" << coner_num <<std::endl;
+  // std::cout<< " flat_num=" << flat_num <<std::endl;
+  // std::cout<< " non_num=" << non_num <<std::endl;
 
 }
 

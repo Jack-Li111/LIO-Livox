@@ -86,9 +86,13 @@ void IMUIntegrator::PreIntegration(double lastTime, const Eigen::Vector3d& bg, c
             imu->angular_velocity.y,
             imu->angular_velocity.z;
     Eigen::Vector3d acc;
-    acc << imu->linear_acceleration.x * gnorm,
-            imu->linear_acceleration.y * gnorm,
-            imu->linear_acceleration.z * gnorm;
+    // acc << imu->linear_acceleration.x * gnorm,
+    //         imu->linear_acceleration.y * gnorm,
+    //         imu->linear_acceleration.z * gnorm;
+    //新驱动已经乘g
+    acc << imu->linear_acceleration.x,
+        imu->linear_acceleration.y,
+        imu->linear_acceleration.z;
     double dt = imu->header.stamp.toSec() - current_time;
     if(dt <= 0 )
       ROS_WARN("dt <= 0");
@@ -139,9 +143,13 @@ Eigen::Vector3d IMUIntegrator::GetAverageAcc() {
   Eigen::Vector3d sum_acc(0, 0, 0);
   for(auto & imu : vimuMsg){
     Eigen::Vector3d acc;
-    acc << imu->linear_acceleration.x * gnorm,
-           imu->linear_acceleration.y * gnorm,
-           imu->linear_acceleration.z * gnorm;
+    // acc << imu->linear_acceleration.x * gnorm,
+    //        imu->linear_acceleration.y * gnorm,
+    //        imu->linear_acceleration.z * gnorm;
+    //新驱动已经乘g
+    acc << imu->linear_acceleration.x,
+        imu->linear_acceleration.y,
+        imu->linear_acceleration.z;
     sum_acc += acc;
     i++;
     if(i > 30) break;

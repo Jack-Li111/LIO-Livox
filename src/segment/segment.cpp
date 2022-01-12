@@ -88,6 +88,8 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
     // 4 粗略地面分割for地上分割
     int *pLabelGnd=(int*)calloc(pntNum,sizeof(int));
     int gnum=GndSeg(pLabelGnd,fPoints2,pntNum,1.0);
+    // std::cout<<"allnum="<<pntNum<<std::endl;
+    // std::cout<<"gnum="<<gnum<<std::endl;
 
     // 5 地上分割
     int agnum = pntNum-gnum;
@@ -97,7 +99,7 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
     int agcnt=0;//非地面点数量
     for(int ii=0;ii<pntNum;ii++)
     {
-        if(pLabelGnd[ii]==0) //上一步地面标记为1，非地面标记为0
+        if(pLabelGnd[ii]==0) //非地面 上一步地面标记为1，pLabelGnd[ii] = 0为非地面
         {
             fPoints3[agcnt*4]=fPoints2[ii*4];
             fPoints3[agcnt*4+1]=fPoints2[ii*4+1];
@@ -108,7 +110,7 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
         }
         else
         {
-            pLabel2[ii] = 0; //地面为1
+            pLabel2[ii] = 0; //地面 pLabelGnd[ii] = 1为地面
         }
         
     }
@@ -116,26 +118,33 @@ int PCSeg::DoSeg(int *pLabel1, float* fPoints1, int pointNum)
     int *pLabelAg=(int*)calloc(agnum,sizeof(int));
     if (agnum != 0)
     {
-        AbvGndSeg(pLabelAg,fPoints3,agnum);  
+        AbvGndSeg(pLabelAg,fPoints3,agnum);  //pLabelAg = 1背景 0其他
     }
     else
     {
         std::cout << "0 above ground points!\n";
     }
-
+    int front_num,back_num = 0;
   
     for(int ii=0;ii<agcnt;ii++)
     {   
         if (pLabelAg[ii] >= 10)//前景为0 背景为1 物体分类后 >=10
+        {
             pLabel2[idtrans3[ii]] = 200;//pLabelAg[ii]; //前景
-        else if (pLabelAg[ii] > 0)
+            //++front_num;
+        }
+        else if (pLabelAg[ii] > 0){
             pLabel2[idtrans3[ii]] = 1; //背景1 -> 0
+            //++back_num;
+        }
         else
         {
             pLabel2[idtrans3[ii]] = -1;
         }
         
     }
+    // std::cout<<"front_num="<<front_num<<std::endl;
+    // std::cout<<"back_num="<<back_num<<std::endl;
      
     for(int pid=0;pid<pntNum;pid++)
     {
@@ -666,15 +675,15 @@ int AbvGndSeg(int *pLabel, float *fPoints, int pointNum)
 
     SegBG(pLabel,cloud,kdtree,0.5); //背景label=1 前景0
 
-    SegObjects(pLabel,cloud,kdtree,0.7);
+    SegObjects(pLabel,cloud,kdtree,0.7); //0.7
 
-    FreeSeg(fPoints,pLabel,pointNum);
+    FreeSeg(fPoints,pLabel,pointNum); //！！
     return 0;
 }
 
 int SegBG(int *pLabel, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::KdTreeFLANN<pcl::PointXYZ> &kdtree, float fSearchRadius)
 {
-    //从较高的一些点开始从上往下增长，这样能找到一些类似树木、建筑物这样的高大背景
+    //从较高的一些点开始从上往下增长，这样能找到一些类似树木、建筑物这样的高大背景(4米，6米)
     // clock_t t0,t1,tsum=0;
     int pnum=cloud->points.size();
     pcl::PointXYZ searchPoint;
@@ -717,7 +726,7 @@ int SegBG(int *pLabel, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::KdTreeFLA
             if(pLabel[k_inds[ii]]==0)
             {
                 pLabel[k_inds[ii]]=1;
-                if(cloud->points[k_inds[ii]].z>0.2)//地面60cm以下不参与背景分割，以防止错误的地面点导致过度分割
+                if(cloud->points[k_inds[ii]].z>0.6)//地面60cm以下不参与背景分割，以防止错误的地面点导致过度分割 0.2
                 {
                     seeds.push_back(k_inds[ii]);
                 }
@@ -806,11 +815,11 @@ int SegObjects(int *pLabel, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::KdTr
     //遍历每个非背景点，若高度大于1则寻找一个簇，并给一个编号(>10)
     for(int pid=0;pid<pnum;pid++)
     {
-        if(pLabel[pid]==0)
+        if(pLabel[pid]==0) //pLabel[pid] = 1 背景 0 其他
         {
-            if(cloud->points[pid].z>0.4)//高度阈值
+            if(cloud->points[pid].z>0.2)//高度阈值 0.4
             {
-                SClusterFeature cf = FindACluster(pLabel,pid,labelId,cloud,kdtree,fSearchRadius,0);
+                SClusterFeature cf = FindACluster(pLabel,pid,labelId,cloud,kdtree,fSearchRadius,-10);//背景以外的点做聚类，聚类成功的pLabel=labelId
                 int isBg=0;
 
                 // cluster 分类
@@ -838,10 +847,10 @@ int SegObjects(int *pLabel, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::KdTr
                 {
                     isBg = 4;
                 }
-                else if(cf.pnum<5 || (cf.pnum<10 && cx<50)) //点太少
-                {
-                    isBg=5;
-                }
+                // else if(cf.pnum<5 || (cf.pnum<10 && cx<50)) //点太少
+                // {
+                //     isBg=5;
+                // }
                 else if((cf.zmean>3)||(cf.zmean<0.3))//太高或太低
                 {
                     isBg = 6;//1;
@@ -853,7 +862,7 @@ int SegObjects(int *pLabel, pcl::PointCloud<pcl::PointXYZ>::Ptr cloud, pcl::KdTr
                     {
                         if(pLabel[ii]==labelId)
                         {
-                            pLabel[ii]=isBg;
+                            pLabel[ii]=isBg; //将以上的同一类别的物体统一到9以下
                         }
                     }
                 }
@@ -1010,7 +1019,7 @@ int CalFreeRegion(float *pFreeDis, float *fPoints,int *pLabel,int pointNum)
     int thetaId;
     float dis;
 
-    for(int ii=0;ii<FREE_ANG_NUM;ii++)
+    for(int ii=0;ii<FREE_ANG_NUM;ii++) //FREE_ANG_NUM =360
     {
         pFreeDis[ii]=20000;
     }
@@ -1039,7 +1048,7 @@ int FreeSeg(float *fPoints,int *pLabel,int pointNum)
     int thetaId;
     float dis;
 
-    CalFreeRegion(pFreeDis,fPoints,pLabel,pointNum);
+    CalFreeRegion(pFreeDis,fPoints,pLabel,pointNum); //计算每个角度最近距离 pFreeDis
 
     for(int pid=0;pid<pointNum;pid++)
     {

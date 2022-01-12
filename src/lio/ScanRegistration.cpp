@@ -34,8 +34,12 @@ void lidarCallBackHorizon(const livox_ros_driver::CustomMsgConstPtr &msg) {
   sensor_msgs::PointCloud2 laserCloudMsg;
   pcl::toROSMsg(*laserCloud, laserCloudMsg);
   laserCloudMsg.header = msg->header;
-  laserCloudMsg.header.stamp.fromNSec(msg->timebase+msg->points.back().offset_time);
+  //laserCloudMsg.header.stamp.fromNSec(msg->timebase+msg->points.back().offset_time);
+  laserCloudMsg.header.stamp.fromNSec(msg->header.stamp.toNSec()+msg->points.back().offset_time);
   pubFullLaserCloud.publish(laserCloudMsg);
+  // std::cout<<std::fixed<<std::setprecision(4)<<"scan_time0="<<msg->timebase<<std::endl;
+  // std::cout<<std::fixed<<std::setprecision(4)<<"scan_time1="<<msg->points.back().offset_time<<std::endl;
+  // std::cout<<std::fixed<<std::setprecision(4)<<"scan_time2="<<laserCloudMsg.header.stamp.toSec()<<std::endl;
 
 }
 

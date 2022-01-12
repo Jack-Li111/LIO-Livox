@@ -23,7 +23,9 @@
         <param name="config_file" value="$(find lio_livox)/config/horizon_config.yaml"/>
     </node>
 
+    <!-- 和gps融合后的地图 -->
     <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz_all" args="-d $(find lio_livox)/rviz_cfg/lio_all.rviz" />
-    <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find lio_livox)/rviz_cfg/lio.rviz" />
+    <!-- 原始程序输出的结果 -->
+    <!-- <node launch-prefix="nice" pkg="rviz" type="rviz" name="rviz" args="-d $(find lio_livox)/rviz_cfg/lio.rviz" /> -->
 
 </launch>

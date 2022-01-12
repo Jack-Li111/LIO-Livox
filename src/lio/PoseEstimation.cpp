@@ -59,6 +59,7 @@ Estimator* estimator;
 ros::Publisher pubLaserOdometry;
 ros::Publisher pubLaserOdometryPath;
 ros::Publisher pubFullLaserCloud;
+ros::Publisher pubOutlierLaserCloud;
 tf::StampedTransform laserOdometryTrans;
 tf::TransformBroadcaster* tfBroadcaster;
 ros::Publisher pubGps;
@@ -419,7 +420,10 @@ bool TryMAPInitialization() {
 
   Eigen::Vector3d ba_vec(para_ba[0], para_ba[1], para_ba[2]);
   Eigen::Vector3d bg_vec(para_bg[0], para_bg[1], para_bg[2]);
-
+  // std::cout<<"ba_vec="<<para_ba[0]<<", "<<para_ba[1]<<", "<<para_ba[2]<<std::endl;
+  // std::cout<<"bg_vec="<<para_bg[0]<<", "<<para_bg[1]<<", "<<para_bg[2]<<std::endl;
+  // std::cout<<"ba_vec.norm()="<<ba_vec.norm()<<std::endl;
+  // std::cout<<"bg_vec.norm()="<<bg_vec.norm()<<std::endl;
   if(ba_vec.norm() > 0.5 || bg_vec.norm() > 0.5) {
     ROS_WARN("Too Large Biases! Initialization Failed!");
     return false;
@@ -697,17 +701,31 @@ void process(){
       // publish lidar points
       int laserCloudFullResNum = lidar_list->front().laserCloud->points.size();
       pcl::PointCloud<PointType>::Ptr laserCloudAfterEstimate(new pcl::PointCloud<PointType>());
+      pcl::PointCloud<PointType>::Ptr laserCloudOutlier(new pcl::PointCloud<PointType>());
       laserCloudAfterEstimate->reserve(laserCloudFullResNum);
       for (int i = 0; i < laserCloudFullResNum; i++) {
         PointType temp_point;
         MAP_MANAGER::pointAssociateToMap(&lidar_list->front().laserCloud->points[i], &temp_point, transformTobeMapped); //点云转换到全局坐标
-        laserCloudAfterEstimate->push_back(temp_point);
+        if((lidar_list->front().laserCloud->points[i].normal_z == 0) || (lidar_list->front().laserCloud->points[i].normal_z > 9))
+          laserCloudOutlier->push_back(temp_point);
+        else
+          laserCloudAfterEstimate->push_back(temp_point);
+
+
       }
+      //std::cout<<"  laserCloudAfterEstimate="<<laserCloudAfterEstimate->points.size()<<std::endl;
+
       sensor_msgs::PointCloud2 laserCloudMsg;
       pcl::toROSMsg(*laserCloudAfterEstimate, laserCloudMsg);
       laserCloudMsg.header.frame_id = "/world";
       laserCloudMsg.header.stamp.fromSec(lidar_list->front().timeStamp);
       pubFullLaserCloud.publish(laserCloudMsg); //最后输出的地图，原代码地图数量有限
+
+      sensor_msgs::PointCloud2 laserCloudMsg1;
+      pcl::toROSMsg(*laserCloudOutlier, laserCloudMsg1);
+      laserCloudMsg1.header.frame_id = "/world";
+      laserCloudMsg1.header.stamp.fromSec(lidar_list->front().timeStamp);
+      pubOutlierLaserCloud.publish(laserCloudMsg1); //最后输出的地图，原代码地图数量有限
 
       //此处为全局地图显示
       _mutexMapQueue.lock();
@@ -1039,6 +1057,7 @@ int main(int argc, char** argv)
     WINDOWSIZE = 20;
 
   pubFullLaserCloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("/livox_full_cloud_mapped", 10);
+  pubOutlierLaserCloud = nodeHandler.advertise<sensor_msgs::PointCloud2>("/livox_outlier_cloud_mapped", 10);
   pubLaserOdometry = nodeHandler.advertise<nav_msgs::Odometry> ("/livox_odometry_mapped", 5);
   pubLaserOdometryPath = nodeHandler.advertise<nav_msgs::Path> ("/livox_odometry_path_mapped", 5);
 	pubGps = nodeHandler.advertise<sensor_msgs::NavSatFix>("/lidar", 1000);
